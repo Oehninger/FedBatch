@@ -15,49 +15,49 @@ figure.
 **LP model --- Barrigón et al. (2015).** Protein production is
 represented by a growth-associated formulation with a smooth transition
 around the critical methanol concentration
-(S\_{`\mathrm{crit}`{=tex}}=1.9 `\mathrm{g\,L^{-1}}`{=tex}).
+$S_{\mathrm{crit}}=1.9 g L^{-1}$.
 
 **NM model --- Ponte et al. (2018).** Protein production is represented
 by a non-monotonic methanol-dependent expression,
 
-\[ q_P(S)=`\frac{q_{\max,P}S}{K_{S,P}+S+S^2/K_{I,P}}`{=tex}. \]
+$q_P(S)=\frac{q_{\max,P}S}{K_{S,P}+S+S^2/K_{I,P}}.$
 
 The remaining growth and substrate-consumption kinetics are common to
 both formulations.
 
 ## Optimization problem
 
-The manipulated variable is the methanol feed rate (F(t)), while the
-final induction time (t_f) is also optimized. The objective is to
+The manipulated variable is the methanol feed rate $F(t)$, while the
+final induction time $t_f$ is also optimized. The objective is to
 maximize the average net total ROL production rate,
 
-\[ J=`\frac{P(t_f)V(t_f)-P_0V_0}{t_f}`{=tex}. \]
+$J=\frac{P(t_f)V(t_f)-P_0V_0}{t_f}.$
 
 The model includes biomass concentration, residual methanol, ROL
 activity, and culture volume as dynamic states. The implementation
 constrains biomass, methanol concentration, culture volume, feed rate,
-and final time. fileciteturn17file0L176-L226
+and final time. 
 
 ## Reported performance indicators
 
 For each kinetic formulation, the code reports:
 
--   optimal induction time (t_f);
--   objective value (J\^\*) \[U h(\^{-1})\];
--   net ROL production (`\Delta`{=tex}(PV)) \[U\];
--   final ROL activity (P_F) \[U mL(\^{-1})\];
--   specific productivity (Q\_{P/X}) \[U g(\^{-1}) h(\^{-1})\];
+-   optimal induction time $t_f$;
+-   objective value $J^*$ U h$^{-1})$;
+-   net ROL production $\Delta(PV)$ U;
+-   final ROL activity $P_f$ U mL$^{-1}$;
+-   specific productivity $Q_{P/X}$ U g$^{-1}$h$^{-1}$;
 -   final biomass, volume, and residual methanol;
 -   mean methanol concentration, specific growth rate, and specific
     protein-production rate.
 
 The specific productivity is calculated as
 
-\[ Q\_{P/X} = `\frac{P(t_f)V(t_f)-P_0V_0}`{=tex} {t_f,X(t_f)V(t_f)}. \]
+$Q_{P/X} = \frac{P(t_f)V(t_f)-P_0V_0}{t_f,X(t_f)V(t_f)}.$
 
 The code computes these indicators from the optimized trajectories and
 stores them in a summary table for direct LP--NM comparison.
-fileciteturn17file0L352-L405
+
 
 ## Requirements
 
