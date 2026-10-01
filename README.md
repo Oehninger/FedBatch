@@ -1,77 +1,116 @@
-# Optimal Control of Recombinant Protein Production in Fed-Batch Culture
+# Optimal Methanol Feeding: LP vs NM
 
-This repository contains the computational implementation of a dynamic optimization model for recombinant protein production in a fed-batch bioreactor.
+## Description
 
-The model describes the dynamics of biomass, methanol concentration, recombinant protein production, and culture volume. The feeding strategy and final cultivation time are determined through dynamic optimization using **GEKKO**.
+This code solves and compares two optimal-control formulations for methanol feeding during recombinant ROL production in a fed-batch
+*Komagataella phaffii* process. The process balances, growth kinetics, methanol-consumption kinetics, operating constraints, and optimization
+criterion are shared by both cases; only the specific protein-production kinetics (q_P) are changed.
 
-## Model
+The implementation uses GEKKO and a simultaneous dynamic optimization approach based on orthogonal collocation. The source code defines the LP
+and NM alternatives, solves both optimization problems, summarizes process-performance indicators, and generates a four-panel comparison
+figure. 
 
-The state variables are:
+## Kinetic formulations
 
-* \(x(t)\): biomass concentration
-* \(s(t)\): methanol concentration
-* \(r(t)\): recombinant protein concentration
-* \(v(t)\): culture volume
+**LP model --- Barrigón et al. (2015).** Protein production is
+represented by a growth-associated formulation with a smooth transition
+around the critical methanol concentration
+(S\_{`\mathrm{crit}`{=tex}}=1.9 `\mathrm{g\,L^{-1}}`{=tex}).
 
-The manipulated variable is the feed rate \(u(t)\).
+**NM model --- Ponte et al. (2018).** Protein production is represented
+by a non-monotonic methanol-dependent expression,
 
-Biomass growth is described using a substrate-inhibition (Haldane-type) kinetic function,
+\[ q_P(S)=`\frac{q_{\max,P}S}{K_{S,P}+S+S^2/K_{I,P}}`{=tex}. \]
 
-$$
-\mu(s)=
-\frac{\mu_{\max}s}
-{K_M+s+s^2/K_I}.
-$$
+The remaining growth and substrate-consumption kinetics are common to
+both formulations.
 
-The optimization problem determines the feeding profile \(u(t)\) and the final cultivation time \(t_f\) to maximize recombinant protein productivity.
+## Optimization problem
 
-## Experimental comparison
+The manipulated variable is the methanol feed rate (F(t)), while the
+final induction time (t_f) is also optimized. The objective is to
+maximize the average net total ROL production rate,
 
-Model predictions are compared with experimental data reported by **Barrigón et al. (2015)**.
+\[ J=`\frac{P(t_f)V(t_f)-P_0V_0}{t_f}`{=tex}. \]
 
-The main quantities used for comparison are the increments in total biomass and total recombinant protein:
+The model includes biomass concentration, residual methanol, ROL
+activity, and culture volume as dynamic states. The implementation
+constrains biomass, methanol concentration, culture volume, feed rate,
+and final time. fileciteturn17file0L176-L226
 
-$$
-\Delta XV(t)=x(t)V(t)-x(0)V(0),
-$$
+## Reported performance indicators
 
-$$
-\Delta PV(t)=r(t)V(t)-r(0)V(0).
-$$
+For each kinetic formulation, the code reports:
 
-The repository includes scripts for generating the corresponding experimental/model comparison figures.
+-   optimal induction time (t_f);
+-   objective value (J\^\*) \[U h(\^{-1})\];
+-   net ROL production (`\Delta`{=tex}(PV)) \[U\];
+-   final ROL activity (P_F) \[U mL(\^{-1})\];
+-   specific productivity (Q\_{P/X}) \[U g(\^{-1}) h(\^{-1})\];
+-   final biomass, volume, and residual methanol;
+-   mean methanol concentration, specific growth rate, and specific
+    protein-production rate.
+
+The specific productivity is calculated as
+
+\[ Q\_{P/X} = `\frac{P(t_f)V(t_f)-P_0V_0}`{=tex} {t_f,X(t_f)V(t_f)}. \]
+
+The code computes these indicators from the optimized trajectories and
+stores them in a summary table for direct LP--NM comparison.
+fileciteturn17file0L352-L405
 
 ## Requirements
 
-The implementation uses:
+-   Python 3
+-   NumPy
+-   Pandas
+-   Matplotlib
+-   GEKKO
 
-* Python
-* NumPy
-* Pandas
-* Matplotlib
-* GEKKO
+For Google Colab, the notebook includes installation commands for the
+required packages. 
 
-Install the required packages with:
+## Execution
 
-```bash
-pip install numpy pandas matplotlib gekko
+Run the notebook/script from top to bottom. The two cases are solved
+with:
+
+``` python
+resumen_LP, tabla_LP = optimizar_modelo(
+    modelo='LP',
+    nt=41,
+    dmax=None,
+    disp=False
+)
+
+resumen_NM, tabla_NM = optimizar_modelo(
+    modelo='NM',
+    nt=41,
+    dmax=None,
+    disp=False
+)
 ```
 
-## Usage
+The resulting summaries are combined in the `comparacion` DataFrame.
 
-Run the Jupyter notebook sequentially to:
 
-1. define the fed-batch model;
-2. solve the dynamic optimization problem;
-3. construct the simulation results table;
-4. compute \(\Delta XV\) and \(\Delta PV\);
-5. compare model predictions with experimental data;
-6. generate the figures.
+## Output figure
 
-## Reference
+The code generates `LP_NM_comparison` in PDF, EPS, and PNG formats. The
+four panels compare:
 
-Experimental data used for model comparison were obtained from Barrigón et al. (2015) https://doi.org/10.1002/bit.25518
+1.  LP and NM protein-production kinetics;
+2.  optimal residual-methanol trajectories;
+3.  optimal methanol-feed profiles;
+4.  predicted total ROL activity.
 
-## Authors
+The PNG version is exported at 600 dpi. 
 
-Research code developed in the context of mathematical modeling and optimization of biotechnological processes.
+## Scope
+
+The numerical comparison is intended to assess how the assumed
+protein-production kinetics influence the predicted optimal
+methanol-feeding strategy and process performance. A higher objective
+value for one formulation should not, by itself, be interpreted as
+evidence that the corresponding kinetic model is biologically more
+accurate.
