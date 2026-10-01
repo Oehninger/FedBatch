@@ -1,0 +1,941 @@
+#@title Instalacion de librerías GEKKO, Matplotlib, Nummpy y Pandas
+!pip install numpy
+!pip install gekko
+!pip install matplotlib
+!pip install pandas
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from gekko import GEKKO
+
+
+def optimizar_modelo(modelo='LP', nt=61, dmax=0.0005, disp=False):
+
+    # ============================================================
+    # MODELO GEKKO
+    # ============================================================
+
+    m = GEKKO()
+
+    m.time = np.linspace(0, 1, nt)
+
+    # ============================================================
+    # VARIABLES DE ESTADO
+    # ============================================================
+
+    x = m.Var(
+        value=27,
+        lb=0,
+        ub=55
+    )  # Biomass concentration [g/L]
+
+    s = m.Var(
+        value=1.2,
+        lb=2,
+        ub=10
+    )  # Methanol concentration [g/L]
+
+    r = m.Var(
+        value=50000,
+        lb=0
+    )  # Protein concentration [U/L]
+
+    v = m.Var(
+        value=2,
+        lb=0,
+        ub=5
+    )  # Volume [L]
+
+
+    # ============================================================
+    # TERMINAL POINT
+    # ============================================================
+
+    p = np.zeros(nt)
+    p[-1] = 1.0
+
+    final = m.Param(value=p)
+
+
+    # ============================================================
+    # FINAL TIME
+    # ============================================================
+
+    tf = m.FV(
+        value=45,
+        lb=10,
+        ub=80
+    )
+
+    tf.STATUS = 1
+
+
+    # ============================================================
+    # CONTROL: FEED RATE
+    # ============================================================
+
+    u = m.MV(
+        value=0.01,
+        lb=0,
+        ub=0.05
+    )
+
+    u.STATUS = 1
+
+    # Sin penalización de movimiento
+    u.DCOST = 0
+
+    # Máximo cambio permitido
+    if dmax is not None:
+        u.DMAX = dmax
+
+    m.free_initial(u)
+
+
+    # ============================================================
+    # PARÁMETROS COMUNES
+    # Barrigón et al. (2015)
+    # ============================================================
+
+    MuM = 0.069
+    KM  = 0.40
+    KI  = 8.85
+
+    YM = 4.21
+    Mm = 0.0142
+
+    # Methanol concentration in feed
+    MF = 775
+
+
+    # ============================================================
+    # SPECIFIC GROWTH RATE
+    # Haldane kinetics
+    # ============================================================
+
+    mu = MuM*s / (KM + s + s**2/KI)
+
+
+    # ============================================================
+    # METHANOL CONSUMPTION
+    # Pirt model
+    # ============================================================
+
+    qs = Mm + mu/YM
+
+
+    # ============================================================
+    # SPECIFIC PROTEIN PRODUCTION RATE
+    # ============================================================
+
+    if modelo == 'LP':
+
+        # --------------------------------------------------------
+        # MODEL LP
+        # Barrigón et al. (2015)
+        # --------------------------------------------------------
+
+        bet = 39.3
+        alf = 4567
+        Scrit = 1.9
+
+        # Suavización de la transición
+        k = 10
+
+        H = 0.5 * (
+            1 + m.tanh(k*(s-Scrit))
+        )
+
+        qp = bet + H*alf*mu
+
+
+    elif modelo == 'NM':
+
+        # --------------------------------------------------------
+        # MODEL NM
+        # Ponte et al. (2018)
+        # --------------------------------------------------------
+
+        qmaxP = 2200
+        KSP = 10.0
+        KIP = 1.2
+
+        qp = qmaxP*s / (
+            KSP + s + s**2/KIP
+        )
+
+
+    else:
+
+        raise ValueError(
+            "modelo debe ser 'LP' o 'NM'"
+        )
+
+
+    # ============================================================
+    # BALANCES
+    # ============================================================
+
+    # Biomass
+    m.Equation(
+        x.dt() ==
+        (
+            mu*x
+            - (u*x)/v
+        )*tf
+    )
+
+    # Methanol
+    m.Equation(
+        s.dt() ==
+        (
+            u*(MF-s)/v
+            - qs*x
+        )*tf
+    )
+
+    # Protein
+    m.Equation(
+        r.dt() ==
+        (
+            x*qp
+            - (u*r)/v
+        )*tf
+    )
+
+    # Volume
+    m.Equation(
+        v.dt() ==
+        u*tf
+    )
+
+
+    # ============================================================
+    # OBJECTIVE FUNCTION
+    # ============================================================
+
+    # Initial conditions consistent with Ponte et al. (2018)
+    P0 = 50000.0      # [U/L] = 50 U/mL
+    V0 = 2.0          # [L]
+
+    PV0 = P0 * V0     # [U]
+
+    # Maximize average net total protein production rate
+    m.Obj(
+        -(((r*v - PV0)*final)/tf)
+    )
+
+
+    # ============================================================
+    # SOLVER
+    # ============================================================
+
+    m.options.IMODE = 6
+    m.options.NODES = 3
+    m.options.MV_TYPE = 1
+    m.options.MAX_ITER = 300
+    m.options.SOLVER = 3
+
+
+    # ============================================================
+    # SOLVE
+    # ============================================================
+
+    m.solve(disp=disp)
+
+
+    # ============================================================
+    # EXTRACT RESULTS
+    # ============================================================
+
+    tfinal = float(tf.value[0])
+
+    tm = np.asarray(
+        list(m.time),
+        dtype=float
+    ) * tfinal
+
+    x_val = np.asarray(list(x.value), dtype=float)
+    s_val = np.asarray(list(s.value), dtype=float)
+    r_val = np.asarray(list(r.value), dtype=float)
+    v_val = np.asarray(list(v.value), dtype=float)
+    u_val = np.asarray(list(u.value), dtype=float)
+
+
+    # ============================================================
+    # CALCULATED VARIABLES
+    # ============================================================
+
+    mu_val = (
+        MuM*s_val /
+        (KM + s_val + s_val**2/KI)
+    )
+
+
+    if modelo == 'LP':
+
+        H_val = 0.5 * (
+            1 + np.tanh(
+                10*(s_val-1.9)
+            )
+        )
+
+        qp_val = (
+            39.3
+            + H_val*4567*mu_val
+        )
+
+    else:
+
+        qp_val = (
+            2200*s_val /
+            (
+                10.0
+                + s_val
+                + s_val**2/1.2
+            )
+        )
+
+
+    # ============================================================
+    # EXTENSIVE QUANTITIES
+    # ============================================================
+
+    X = x_val*v_val       # Total biomass [g]
+    R = r_val*v_val       # Total protein activity [U]
+
+    Delta_XV = X-X[0]
+    Delta_RV = R-R[0]
+
+    instantaneous_production = (
+        x_val * v_val * qp_val
+    )  # [U/h]
+
+
+    # ============================================================
+    # TRAJECTORY DATAFRAME
+    # ============================================================
+
+    tabla = pd.DataFrame({
+
+        'Time': tm,
+
+        'Biomass_density': x_val,
+
+        'Methanol': s_val,
+
+        'Protein_density': r_val,
+
+        'Volume': v_val,
+
+        'Feed_rate': u_val,
+
+        'mu': mu_val,
+
+        'qp': qp_val,
+
+        'Total_biomass': X,
+
+        'Total_protein': R,
+
+        'Delta_XV': Delta_XV,
+
+        'Delta_RV': Delta_RV,
+
+        'Protein_production_rate':
+            instantaneous_production
+
+    })
+
+
+    # ============================================================
+    # SUMMARY
+    # ============================================================
+
+    protein_initial = R[0]
+    protein_final = R[-1]
+
+    # Net protein produced during induction [U]
+    protein_produced = (
+        protein_final - protein_initial
+    )
+
+    # ------------------------------------------------------------
+    # Objective J*
+    # Average net total protein production rate [U/h]
+    # ------------------------------------------------------------
+
+    protein_productivity = (
+        protein_produced / tfinal
+    )
+
+
+    # ------------------------------------------------------------
+    # NEW 1: FINAL ROL TITER / ACTIVITY
+    #
+    # r is expressed in U/L.
+    # Convert to U/mL.
+    # ------------------------------------------------------------
+
+    PF = r_val[-1] / 1000.0
+
+
+    # ------------------------------------------------------------
+    # NEW 2: SPECIFIC PRODUCTIVITY
+    #
+    # QP/X_F =
+    # Delta(PV) / [t_f * X_F * V_F]
+    #
+    # X[-1] = x_F * V_F = final total biomass [g]
+    #
+    # Units:
+    # U / (h*g) = U g^-1 h^-1
+    # ------------------------------------------------------------
+
+    specific_productivity = (
+        protein_produced /
+        (tfinal * X[-1])
+    )
+
+
+    # Equivalent:
+    #
+    # specific_productivity =
+    # protein_productivity / X[-1]
+
+
+    # Final accumulated protein divided by process time
+    total_protein_rate = (
+        protein_final / tfinal
+    )
+
+
+    # ============================================================
+    # CONTROL VARIABILITY
+    # ============================================================
+
+    TV_u = np.sum(
+        np.abs(np.diff(u_val))
+    )
+
+    max_delta_u = np.max(
+        np.abs(np.diff(u_val))
+    )
+
+
+    # ============================================================
+    # RESULTS DICTIONARY
+    # ============================================================
+
+    resumen = {
+
+        'Model':
+            modelo,
+
+        'Final_time_h':
+            tfinal,
+
+        'Initial_protein_U':
+            protein_initial,
+
+        'Final_protein_U':
+            protein_final,
+
+        'Protein_produced_U':
+            protein_produced,
+
+        # Objective J*
+        'J_star_U_h':
+            protein_productivity,
+
+        # NEW: final protein activity
+        'PF_U_mL':
+            PF,
+
+        # NEW: specific productivity
+        'Specific_productivity_U_g_h':
+            specific_productivity,
+
+        'Final_protein_rate_U_h':
+            total_protein_rate,
+
+        'Final_protein_density_U_L':
+            r_val[-1],
+
+        'Final_biomass_density_g_L':
+            x_val[-1],
+
+        'Final_biomass_g':
+            X[-1],
+
+        'Final_volume_L':
+            v_val[-1],
+
+        'Final_methanol_g_L':
+            s_val[-1],
+
+        'Mean_methanol_g_L':
+            np.mean(s_val),
+
+        'Mean_mu_h':
+            np.mean(mu_val),
+
+        'Mean_qp_U_g_h':
+            np.mean(qp_val),
+
+        'TV_u':
+            TV_u,
+
+        'Max_Delta_u':
+            max_delta_u
+    }
+
+
+    return resumen, tabla
+
+
+# ================================================================
+# OPTIMIZATION: LP
+# ================================================================
+
+resumen_LP, tabla_LP = optimizar_modelo(
+    modelo='LP',
+    nt=41,
+    dmax=None,
+    disp=False
+)
+
+
+# ================================================================
+# OPTIMIZATION: NM
+# ================================================================
+
+resumen_NM, tabla_NM = optimizar_modelo(
+    modelo='NM',
+    nt=41,
+    dmax=None,
+    disp=False
+)
+
+
+# ================================================================
+# COMPARISON
+# ================================================================
+
+comparacion = pd.DataFrame([
+    resumen_LP,
+    resumen_NM
+])
+
+
+print(
+    comparacion.to_string(
+        index=False
+    )
+)
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+
+# ================================================================
+# PUBLICATION STYLE
+# ================================================================
+
+plt.rcParams.update({
+    'font.family': 'serif',
+    'font.size': 11,
+    'axes.labelsize': 12,
+    'xtick.labelsize': 10,
+    'ytick.labelsize': 10,
+    'legend.fontsize': 10,
+    'axes.linewidth': 1.0
+})
+
+
+# ================================================================
+# 1. PROTEIN-PRODUCTION KINETICS
+# ================================================================
+
+# Common growth parameters
+mu_max = 0.069
+K_M = 0.4
+K_I = 8.85
+
+# LP parameters
+alpha = 4567
+beta = 39.3
+Mcrit = 1.9
+k = 10
+
+# NM parameters
+qmax_P = 2200
+KS_P = 10
+KI_P = 1.2
+
+
+# Methanol domain
+M = np.linspace(0, 10, 1000)
+
+
+# ------------------------------------------------
+# Growth kinetics
+# ------------------------------------------------
+
+mu = (
+    mu_max * M
+    / (
+        K_M
+        + M
+        + M**2 / K_I
+    )
+)
+
+
+# ------------------------------------------------
+# LP protein-production kinetics
+# Smooth approximation
+# ------------------------------------------------
+
+H = 0.5 * (
+    1
+    + np.tanh(
+        k * (M - Mcrit)
+    )
+)
+
+qP_LP = (
+    beta
+    + H * alpha * mu
+)
+
+
+# ------------------------------------------------
+# NM protein-production kinetics
+# ------------------------------------------------
+
+qP_NM = (
+    qmax_P * M
+    / (
+        KS_P
+        + M
+        + M**2 / KI_P
+    )
+)
+
+
+# Theoretical optimum of NM kinetics
+Mopt_NM = np.sqrt(
+    KS_P * KI_P
+)
+
+qPopt_NM = (
+    qmax_P * Mopt_NM
+    / (
+        KS_P
+        + Mopt_NM
+        + Mopt_NM**2 / KI_P
+    )
+)
+
+
+# ================================================================
+# 2. CREATE FIGURE
+# ================================================================
+
+fig, axes = plt.subplots(
+    2,
+    2,
+    figsize=(10, 7.2)
+)
+
+ax1, ax2 = axes[0]
+ax3, ax4 = axes[1]
+
+
+# ================================================================
+# PANEL (a)
+# PROTEIN-PRODUCTION KINETICS
+# ================================================================
+
+ax1.plot(
+    M,
+    qP_LP,
+    linewidth=2,
+    label='LP'
+)
+
+ax1.plot(
+    M,
+    qP_NM,
+    linewidth=2,
+    linestyle='--',
+    label='NM'
+)
+
+# Critical methanol concentration for LP
+ax1.axvline(
+    Mcrit,
+    linestyle=':',
+    linewidth=1.2,
+    label=r'$M_{\mathrm{crit}}=1.9$'
+)
+
+# Maximum of NM kinetics
+ax1.axvline(
+    Mopt_NM,
+    linestyle='-.',
+    linewidth=1.2,
+    label=rf'$M_P^*={Mopt_NM:.2f}$'
+)
+
+ax1.set_xlabel(
+    r'Methanol $M$ ($\mathrm{g\,L^{-1}}$)'
+)
+
+ax1.set_ylabel(
+    r'$q_P$ ($\mathrm{U\,g^{-1}\,h^{-1}}$)'
+)
+
+ax1.set_xlim(0, 10)
+
+ax1.legend(
+    frameon=False,
+    loc='best'
+)
+
+ax1.tick_params(
+    direction='in'
+)
+
+ax1.text(
+    0.03,
+    0.95,
+    '(a)',
+    transform=ax1.transAxes,
+    fontsize=12,
+    fontweight='bold',
+    va='top'
+)
+
+
+# ================================================================
+# PANEL (b)
+# OPTIMAL METHANOL TRAJECTORIES
+# ================================================================
+
+ax2.plot(
+    tabla_LP['Time'],
+    tabla_LP['Methanol'],
+    linewidth=2,
+    label='LP'
+)
+
+ax2.plot(
+    tabla_NM['Time'],
+    tabla_NM['Methanol'],
+    linewidth=2,
+    linestyle='--',
+    label='NM'
+)
+
+# Kinetic reference concentrations
+ax2.axhline(
+    Mcrit,
+    linestyle=':',
+    linewidth=1.1
+)
+
+ax2.axhline(
+    Mopt_NM,
+    linestyle='-.',
+    linewidth=1.1
+)
+
+ax2.set_xlabel(
+    r'Time $t$ (h)'
+)
+
+ax2.set_ylabel(
+    r'Methanol $M$ ($\mathrm{g\,L^{-1}}$)'
+)
+
+ax2.set_ylim(
+    bottom=0
+)
+
+ax2.legend(
+    frameon=False
+)
+
+ax2.tick_params(
+    direction='in'
+)
+
+ax2.text(
+    0.03,
+    0.95,
+    '(b)',
+    transform=ax2.transAxes,
+    fontsize=12,
+    fontweight='bold',
+    va='top'
+)
+
+
+# ================================================================
+# PANEL (c)
+# OPTIMAL FEED RATE
+# ================================================================
+
+ax3.step(
+    tabla_LP['Time'],
+    tabla_LP['Feed_rate'],
+    where='post',
+    linewidth=1.8,
+    label='LP'
+)
+
+ax3.step(
+    tabla_NM['Time'],
+    tabla_NM['Feed_rate'],
+    where='post',
+    linewidth=1.8,
+    linestyle='--',
+    label='NM'
+)
+
+ax3.set_xlabel(
+    r'Time $t$ (h)'
+)
+
+ax3.set_ylabel(
+    r'Feed rate $F$ ($\mathrm{L\,h^{-1}}$)'
+)
+
+ax3.set_ylim(
+    bottom=0
+)
+
+ax3.legend(
+    frameon=False
+)
+
+ax3.tick_params(
+    direction='in'
+)
+
+ax3.text(
+    0.03,
+    0.95,
+    '(c)',
+    transform=ax3.transAxes,
+    fontsize=12,
+    fontweight='bold',
+    va='top'
+)
+
+
+# ================================================================
+# PANEL (d)
+# TOTAL PROTEIN
+# ================================================================
+
+# Divide by 1e3 only to improve readability
+PV_LP = (
+    tabla_LP['Total_protein']
+    / 1e3
+)
+
+PV_NM = (
+    tabla_NM['Total_protein']
+    / 1e3
+)
+
+ax4.plot(
+    tabla_LP['Time'],
+    PV_LP,
+    linewidth=2,
+    label='LP'
+)
+
+ax4.plot(
+    tabla_NM['Time'],
+    PV_NM,
+    linewidth=2,
+    linestyle='--',
+    label='NM'
+)
+
+ax4.set_xlabel(
+    r'Time $t$ (h)'
+)
+
+ax4.set_ylabel(
+    r'Total ROL activity $PV$ ($10^3$ U)'
+)
+
+ax4.legend(
+    frameon=False
+)
+
+ax4.tick_params(
+    direction='in'
+)
+
+ax4.text(
+    0.03,
+    0.95,
+    '(d)',
+    transform=ax4.transAxes,
+    fontsize=12,
+    fontweight='bold',
+    va='top'
+)
+
+
+# ================================================================
+# GENERAL FORMAT
+# ================================================================
+
+for ax in axes.flat:
+
+    ax.grid(
+        alpha=0.20
+    )
+
+    ax.tick_params(
+        top=True,
+        right=True
+    )
+
+
+fig.tight_layout(
+    w_pad=2.0,
+    h_pad=1.5
+)
+
+
+# ================================================================
+# SAVE
+# ================================================================
+
+fig.savefig(
+    'LP_NM_comparison.pdf',
+    bbox_inches='tight'
+)
+
+fig.savefig(
+    'LP_NM_comparison.eps',
+    format='eps',
+    bbox_inches='tight'
+)
+
+fig.savefig(
+    'LP_NM_comparison.png',
+    dpi=600,
+    bbox_inches='tight'
+)
+
+plt.show()
